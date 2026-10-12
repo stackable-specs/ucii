@@ -273,6 +273,8 @@ Projects MUST advertise which operations they support.
 
 Additional project-specific operations MAY exist.
 
+An operation a **profile** defines (§28) is not part of the vocabulary above. It is a profile capability: named by the profile that defines it, advertised by every project that claims that profile, and marked as required or optional accordingly. A project MUST NOT present a profile capability as though this section had standardized it.
+
 ---
 
 # 8. Operation Semantics
@@ -513,6 +515,18 @@ The actual execution-engine syntax is implementation-specific.
 
 The semantic operation is not.
 
+### Conformance and profiles
+
+A project SHOULD declare, in its discovery document, what it claims to conform to: the specification version it implements, the conformance level it claims (§25), and any profile it implements (§28) with the profile's version. A caller MUST NOT have to infer a project's claims from its behaviour.
+
+### Engine mapping
+
+Discovery MUST state how an operation is invoked through the project's execution engine, so a caller can invoke one without learning the engine's own conventions. Where the engine's native invocation is not machine-readable, discovery MUST also state the invocation that yields the canonical result of §12 (§30).
+
+### Required operations
+
+An operation a profile requires MUST be marked as required in discovery, and every other advertised operation as optional. A caller that cannot tell the two apart cannot tell what the project is obliged to expose from what it happens to expose.
+
 ---
 
 # 10. Operation Description
@@ -621,6 +635,14 @@ A canonical representation is:
 
 Execution engines MAY render additional human-readable output.
 
+### Coded errors
+
+An operation that reports a problem through the result SHOULD report it as a **coded error**: the operation it concerns, a code stable enough for a caller to branch on, and a human-readable message. Prose a caller must parse is not a machine-readable result, and a caller must be able to report a problem this specification does not enumerate.
+
+### Profile-defined fields
+
+An operation MAY carry additional fields defined by the profile it implements (§28), beside the fields above. A profile field MUST NOT redefine the meaning of a field this section standardizes.
+
 ---
 
 # 13. Status
@@ -638,6 +660,19 @@ Execution engines MAY internally support richer state models.
 
 Those states SHOULD map onto the UCII status model when communicating with generic callers.
 
+### Status and the process interface
+
+The statuses map onto the process semantics of §14 as follows:
+
+```text
+succeeded  0
+skipped    0
+failed     non-0
+blocked    non-0
+```
+
+`skipped` is zero because a caller that deliberately did not run an operation must not be told it failed; `blocked` is non-zero because the interface did not serve the request. Only these two outcomes are promised, because only two are portable: a caller that needs to tell "refused" apart from "ran and did not succeed" reads the status, which no launcher can collapse.
+
 ---
 
 # 14. Process Semantics
@@ -654,6 +689,8 @@ MUST remain sufficient for basic callers.
 Machine-readable results MAY communicate richer information.
 
 This ensures basic compatibility with shells, hooks, CI runners, and other conventional automation.
+
+A caller that needs anything finer than success or failure MUST read the status of §13 rather than infer it from the code, because the code may be collapsed on the way to the caller by the launcher, the hook, or the CI runner.
 
 ---
 
@@ -677,6 +714,8 @@ For example:
 ```
 
 Outputs SHOULD be machine consumable.
+
+Outputs are claims about what an operation produced, not about what the workspace contains. An operation that did not succeed MUST NOT report the outputs it would have produced, and an operation MUST report an output against the inputs the invocation actually ran with: an artifact some other invocation left behind is not this invocation's output, and reporting it would name something the operation did not produce.
 
 An orchestrator SHOULD be able to pass an output from one operation into another without understanding the underlying implementation.
 
@@ -738,6 +777,8 @@ Example:
 
 Evidence SHOULD be referenceable by subsequent operations, agents, policy systems, and auditors.
 
+Evidence is a record, not a disposable output. A project SHOULD keep it outside the tree its operations generate into, so that measuring or verifying a project adds no working-tree file, and so that `clean` — which removes disposable outputs (§8) — cannot remove the record a result refers to. Evidence a later run compares against MUST be retained, and a project MUST NOT treat its evidence directory as part of the disposable set.
+
 ---
 
 # 17. Side Effects
@@ -775,6 +816,8 @@ For example:
 This information is particularly important for autonomous callers.
 
 Discovery metadata is descriptive; it does **not** constitute authorization.
+
+A declared side-effect class MUST NOT contradict what a standard operation name means. `describe`, `status`, `observe`, `verify`, and `scan` are read-only however a project spells their implementation: a project that advertises one of them as `local`, `external`, or `destructive` has advertised something other than the operation this specification names. A project's conformance check (§29) SHOULD refuse such an advertisement rather than leave a caller to discover it, and SHOULD refuse an operation whose declaration contradicts the name it is advertised under.
 
 ---
 
@@ -1102,3 +1145,115 @@ This yields the central UCII contract:
 > **Any actor can invoke a standard operation. The project chooses how that operation is implemented. The execution engine is the single interface to that implementation. Orchestration remains outside the interface.**
 
 That makes UCII less a universal *CI system* and more a **universal interface between software projects and anything that wants to build, verify, package, release, deploy, or operate them**. CI is then simply one consumer of that interface.
+
+---
+
+# 28. Profiles
+
+A **profile** is a named, versioned extension of UCII: a set of additional requirements, operations, fields, and semantics that a project declares it implements, beyond the operations this specification standardizes.
+
+A profile is identified as `<name>/<version>`, for example:
+
+```text
+ucii/doctor/v0.1
+```
+
+A profile MAY define:
+
+```text
+operations a claiming project MUST expose
+operations it defines as capabilities but does not require
+additional fields in a discovery document or an operation result
+semantics for the measurements, verdicts, or artifacts those operations produce
+```
+
+A profile MUST NOT:
+
+```text
+redefine what a standard operation name means (§7)
+redefine a field this specification standardizes (§12)
+make understanding the standard operations depend on the profile
+```
+
+A project claiming a profile MUST:
+
+* expose every operation the profile requires, and mark it as required in discovery (§9);
+* advertise the profile's operations like any other operation, with a description, parameters, a side-effect class, and an idempotency declaration;
+* identify the profile, with its version, in the result of each operation the profile defines, so a caller holding a result knows which contract produced it;
+* verify its own claim (§29), since a profile claim is checked the same way any other claim about the interface is.
+
+A profile claim does not raise the conformance level (§25).
+
+This specification defines no profile. A project MAY claim none, and is then conformant at the level it claims and nothing more.
+
+---
+
+# 29. Self-Verification
+
+This specification separates **what a project claims to implement** from **proof that the claim holds**. `describe` states the claim; `self-verify` checks it.
+
+`self-verify` is a profile capability (§28), not a standard operation name (§7): a project that claims no profile has nothing to verify against, and is not required to expose it. A project whose profile requires it MUST expose it, MUST mark it required in discovery, and MUST NOT treat its interface as adopted until it passes.
+
+`self-verify` MUST check at least:
+
+```text
+the execution engine is available
+the discovery document is valid, and names a specification version that is supported
+every advertised operation resolves in the execution engine
+declared inputs conform to the specification and reach the implementation
+declared metadata is valid
+a standard operation name carries semantics the standard recognises
+machine-readable results render in the shape a caller expects
+no capability is falsely advertised
+every operation a claimed profile requires is present
+```
+
+It MUST report every problem it finds rather than stopping at the first, so that one run tells a caller everything that is wrong with the interface.
+
+It MUST NOT perform the work the interface describes. An operation is resolved by **dry-running** it — establishing that the engine can reach the implementation, and that a declared input reaches that implementation — so an operation that is destructive or externally mutating has its wiring validated without being performed. A project MAY provide an explicitly safe verification mechanism for an operation that cannot be resolved this way.
+
+It MUST report machine-readably: the invocation result of §12, carrying
+
+```text
+a conformance verdict — the specification, and whether the interface verified
+a verdict for every advertised operation
+coded errors (§12), each naming the operation it concerns, a stable code, and a message
+```
+
+so that a caller can branch on a code without parsing prose, and can report a problem this specification does not enumerate.
+
+It MUST exit zero when the interface verified and non-zero when it did not (§14).
+
+Self-verification is the **adoption gate**. A caller MUST NOT treat a project as conformant on the strength of its discovery document alone, and SHOULD NOT hand-verify what `self-verify` already checks: a caller-side second implementation of the check is the drift this specification exists to prevent (§24).
+
+---
+
+# 30. Structured Invocation
+
+The canonical result of §12 is useful only if a caller can obtain it. Where an execution engine's native invocation of an operation prints human-readable output and returns a process status, a project SHOULD expose an invocation that produces the canonical result and retains the operation's evidence, and MUST advertise it in discovery (§9).
+
+A structured invocation MUST:
+
+* **refuse rather than guess** — an operation that is not advertised, an input that is not declared, or a value outside a declared set comes back with status `blocked` and a warning naming the reason, and the implementation is not invoked;
+* report the **effective inputs** the implementation ran with, declared defaults included, so a caller can tell what was actually done rather than what it asked for;
+* report outputs only for an operation that succeeded, and never an artifact the invocation did not produce (§15);
+* attach the side-effect class and the idempotency the operation declares, so a caller reading one result learns what invoking the operation again would do (§17, §18);
+* record evidence for the invocation (§16) whether the operation succeeded or failed, because evidence describes what happened.
+
+A caller MUST NOT have to learn the engine's own syntax to obtain a machine-readable result. Where the only way to get one is to parse the human-readable output of a target, the interface has not been exposed.
+
+---
+
+# 31. Health Measurement
+
+Two questions are separated above: *what can this project do* (§9), and *does it correctly implement this interface* (§29). A third is distinct from both:
+
+> **What is the measurable health of this project, where is risk concentrated, and how is it changing?**
+
+Health measurement is not verification. `verify` decides whether the project's own correctness checks pass; a health measurement reports magnitudes, risk, and trend that no pass/fail gate expresses. Neither substitutes for the other: a project MUST NOT present a health measurement as a correctness gate, nor a correctness gate as a health measurement.
+
+Health measurement is also not `observe` (§8). `observe` retrieves operational information about a running component or environment; a health measurement examines the project itself — its source, configuration, dependencies, history, and delivery configuration. A health report about a repository is not an observation of a running deployment, and neither operation stands in for the other.
+
+Where a project exposes health measurement, it is a profile capability (§28) and the profile defines its contract. This specification defines no health dimension, metric, or threshold. A profile that does MUST keep the layers of a health claim distinguishable, report every dimension it names whether or not it could be measured, keep its own execution separate from the project's findings, and declare its effect class honestly: measuring a project is observing it, not changing it.
+
+The `doctor` profile — `doctor/SPEC.md`, identifier `ucii/doctor/v0.1` — is one such contract, and a worked example of the mechanism this section describes.
